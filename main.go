@@ -7,8 +7,10 @@ import (
 	"os"
 
 	"airport-delay-api/controllers"
+	"airport-delay-api/models"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -31,11 +33,20 @@ func main() {
 	}
 	fmt.Println("✅ Successfully connected to Supabase PostgreSQL!")
 
+	// AutoMigrate the new User model
+	if err := DB.AutoMigrate(&models.User{}); err != nil {
+		log.Println("Error migrating User model:", err)
+	}
+
+	// Seed admin user
+	seedAdminUser(DB)
+
 	// 3. Initialize the Gin Router
 	router := gin.Default()
 
-	// Initialize the controller with DB connection
+	// Initialize controllers
 	alertController := controllers.NewAlertController(DB)
+	authController := controllers.NewAuthController(DB)
 
 	// 4. Create a simple health check route
 	router.GET("/ping", func(c *gin.Context) {
@@ -44,7 +55,14 @@ func main() {
 		})
 	})
 
-	// CRUD API routes
+	// Auth API routes
+	auth := router.Group("/api/auth")
+	{
+		auth.POST("/register", authController.Register)
+		auth.POST("/login", authController.Login)
+	}
+
+	// CRUD API routes (Unprotected for MVP per requirements)
 	api := router.Group("/api")
 	{
 		api.GET("/alerts", alertController.GetAlerts)
@@ -61,4 +79,22 @@ func main() {
 	}
 	fmt.Println("🚀 Server running on port:", port)
 	router.Run(":" + port)
+}
+
+func seedAdminUser(db *gorm.DB) {
+	var count int64
+	db.Model(&models.User{}).Where("username = ?", "admin").Count(&count)
+	if count == 0 {
+		hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("password"), bcrypt.DefaultCost)
+		admin := models.User{
+			Username:     "admin",
+			PasswordHash: string(hashedPassword),
+			IsAdmin:      true,
+		}
+		if err := db.Create(&admin).Error; err != nil {
+			log.Println("Error seeding admin user:", err)
+		} else {
+			log.Println("✅ Admin user seeded successfully! (admin / password)")
+		}
+	}
 }
